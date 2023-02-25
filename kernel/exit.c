@@ -62,19 +62,19 @@ int sys_kill(int pid,int sig)
 	struct task_struct **p = NR_TASKS + task;
 	int err, retval = 0;
 
-	if (!pid) while (--p > &FIRST_TASK) {
+	if (!pid) while (--p > &FIRST_TASK) {  //  pid=0   给当前进程的进程组发送sig
 		if (*p && (*p)->pgrp == current->pid) 
 			if (err=send_sig(sig,*p,1))
 				retval = err;
-	} else if (pid>0) while (--p > &FIRST_TASK) {
+	} else if (pid>0) while (--p > &FIRST_TASK) { //pid>0   给进程的pid的发送sig
 		if (*p && (*p)->pid == pid) 
 			if (err=send_sig(sig,*p,0))
 				retval = err;
-	} else if (pid == -1) while (--p > &FIRST_TASK)
-		if (err = send_sig(sig,*p,0))
+	} else if (pid == -1) while (--p > &FIRST_TASK)  // pid=-1  给所有进程发送sig
+		if (err = send_sig(sig,*p,0)) 
 			retval = err;
 	else while (--p > &FIRST_TASK)
-		if (*p && (*p)->pgrp == -pid)
+		if (*p && (*p)->pgrp == -pid)   // pid<-1  给进程组号为-pid的进程组发送信号
 			if (err = send_sig(sig,*p,0))
 				retval = err;
 	return retval;
@@ -102,9 +102,10 @@ static void tell_father(int pid)
 int do_exit(long code)
 {
 	int i;
-
+	// 1.1 exit是销毁函数      一个系统调用  do_exit
 	free_page_tables(get_base(current->ldt[1]),get_limit(0x0f));
 	free_page_tables(get_base(current->ldt[2]),get_limit(0x17));
+	// 1.3 如果当前要销毁的进程有子进程，那么就让1号进程作为新的父进程（init进程）
 	for (i=0 ; i<NR_TASKS ; i++)
 		if (task[i] && task[i]->father == current->pid) {
 			task[i]->father = 1;
@@ -112,8 +113,10 @@ int do_exit(long code)
 				/* assumption task[1] is always init */
 				(void) send_sig(SIGCHLD, task[1], 1);
 		}
-	for (i=0 ; i<NR_OPEN ; i++)
-		if (current->filp[i])
+	//1.2  关闭进程打开的所有文件，
+	// 对当前的目录和节点进行同步（文件操作）
+	for (i=0 ; i<NR_OPEN ; i++)  
+		if (current->filp[i])	
 			sys_close(i);
 	iput(current->pwd);
 	current->pwd=NULL;
@@ -121,15 +124,19 @@ int do_exit(long code)
 	current->root=NULL;
 	iput(current->executable);
 	current->executable=NULL;
+	// 如果使用了终端或协处理器，那么就将终端关闭，协处理器关闭
 	if (current->leader && current->tty >= 0)
 		tty_table[current->tty].pgrp = 0;
 	if (last_task_used_math == current)
 		last_task_used_math = NULL;
+	// 1.4 如果当前进程是另一个会话头进程，则会终止会话中的所有进程
 	if (current->leader)
 		kill_session();
+	// 1.5 改变当前进程的运行状态，变成TASK_ZOMBIE僵死状态，并且向其父进程发送SIGCHLD信号
 	current->state = TASK_ZOMBIE;
 	current->exit_code = code;
 	tell_father(current->father);
+	// 1.6 重新调度
 	schedule();
 	return (-1);	/* just to suppress warnings */
 }
