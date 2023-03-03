@@ -1,4 +1,4 @@
-## 操作系统的引导过程和启动程序
+## 1、操作系统的引导过程和启动程序
 
 BIOS		BOOTLOADER
 
@@ -116,3 +116,73 @@ main_memory_start = buffer_memory_end;
 	main_memory_start += rd_init(main_memory_start, RAMDISK*1024);
 #endif
 ```
+
+
+
+
+
+## 2、操作系统启动初始化程序 Init
+
+1. 初始化代码
+
+   ​	起点：磁盘引导程序，需要将内核等移入内存进行运行，并初始化多种模块和硬件
+
+   ​	终点；运行第一个应用程序 系统的根文件系统
+
+
+
+```c
+void init(void)
+{	
+	int pid,i;
+
+	setup((void *) &drive_info);
+	(void) open("/dev/tty0",O_RDWR,0); // 打开标准输入控制台
+	(void) dup(0);	// 打开标准输出控制台  通过复制
+	(void) dup(0);	// 打开标准错误控制台  通过复制
+	printf("%d buffers = %d bytes buffer space\n\r",NR_BUFFERS,
+		NR_BUFFERS*BLOCK_SIZE);
+	printf("Free mem: %d bytes\n\r",memory_end-main_memory_start);
+    
+    // 创建 了 1号进程 如果在0号父进程创建进程成功则 fork函数返回0，
+    // 如果在子进程中fork则返回父进程PID。
+    // 如果fork返回值为0，则在新进程中执行，
+    // 如果返回值不为零，则在父进程中执行
+	if (!(pid=fork())) {
+        // 关闭0号进程创建的标准输入输出
+		close(0);
+		if (open("/etc/rc",O_RDONLY,0))
+			_exit(1);
+        // 挂接文件系统，执行shell程序
+		execve("/bin/sh",argv_rc,envp_rc);
+		_exit(2);
+	}
+    
+    // 在0号进程中 等待子进程退出
+    if (pid>0)
+		while (pid != wait(&i))
+            /* nothing */;
+    
+    
+    while (1) {
+		if ((pid=fork())<0) {
+			printf("Fork failed in init\r\n");
+			continue;
+		}
+		if (!pid) { // 在新创建的子进程中执行
+			close(0);close(1);close(2);
+			setsid();
+			(void) open("/dev/tty0",O_RDWR,0);
+			(void) dup(0);
+			(void) dup(0);
+			_exit(execve("/bin/sh",argv,envp));
+		}
+		while (1)
+			if (pid == wait(&i))
+				break;
+		printf("\n\rchild %d died with code %04x\n\r",pid,i);
+		sync();
+	}
+	_exit(0);
+```
+
